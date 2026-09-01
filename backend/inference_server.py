@@ -193,12 +193,12 @@ def infer(payload: dict[str, Any]) -> dict[str, Any]:
     valid_indices = np.flatnonzero(fluid)
     count = min(1800, valid_indices.size)
     selected = valid_indices[np.argpartition(flat_score[valid_indices], -count)[-count:]] if count else np.array([], dtype=int)
-    cloud = np.column_stack((points[selected], normalized.ravel()[selected])).astype(np.float16).tolist()
+    cloud = np.column_stack((points[selected], normalized.ravel()[selected])).astype(np.float32)
     response = {
         "method": method, "mode": mode, "component": component, "grid": GRID_N,
         "scale": scale, "elapsed_ms": round(elapsed_ms, 1), "fluid_fraction": round(float(fluid.mean()), 4),
         "cloud": cloud, "slices": slices, "vector_slices": vector_slices,
-        "volume": normalized.astype(np.float16).ravel().tolist(),
+        "volume": normalized.astype(np.float32).ravel(),
         "contract": "TVFP32V2 · exact checkpoint forward · finite-difference preview of u=div(A)",
     }
     FIELD_CACHE[cache_key] = {
@@ -210,6 +210,40 @@ def infer(payload: dict[str, Any]) -> dict[str, Any]:
         expired_key, _ = CACHE.popitem(last=False)
         FIELD_CACHE.pop(expired_key, None)
     return response
+
+
+def encode_inference_binary(response: dict[str, Any]) -> bytes:
+    """Pack metadata plus aligned, little-endian FP32 field arrays."""
+    metadata_keys = (
+        "method", "mode", "component", "grid", "scale", "elapsed_ms",
+        "fluid_fraction", "contract",
+    )
+    header = {key: response[key] for key in metadata_keys}
+    descriptors: dict[str, dict[str, Any]] = {}
+    chunks: list[bytes] = []
+    offset = 0
+
+    def append_array(name: str, value: Any) -> None:
+        nonlocal offset
+        array = np.ascontiguousarray(value, dtype="<f4")
+        payload = array.tobytes(order="C")
+        descriptors[name] = {"offset": offset, "length": int(array.size), "shape": list(array.shape)}
+        chunks.append(payload)
+        offset += len(payload)
+
+    append_array("cloud", response["cloud"])
+    append_array("volume", response["volume"])
+    for axis in ("x", "y", "z"):
+        append_array(f"slices.{axis}", response["slices"][axis])
+    for axis in ("x", "y", "z"):
+        append_array(f"vector_slices.{axis}", response["vector_slices"][axis])
+
+    header["format"] = "eigenfluid-fp32-v1"
+    header["arrays"] = descriptors
+    header_bytes = json.dumps(header, separators=(",", ":")).encode("utf-8")
+    prefix = struct.pack("<I", len(header_bytes)) + header_bytes
+    padding = b"\0" * ((-len(prefix)) % 4)
+    return prefix + padding + b"".join(chunks)
 
 
 def estimate_eigenvalue(payload: dict[str, Any]) -> dict[str, Any]:
@@ -257,18 +291,20 @@ def estimate_eigenvalue(payload: dict[str, Any]) -> dict[str, Any]:
 class Handler(BaseHTTPRequestHandler):
     server_version = "MetaballBasis/1.0"
 
-    def _headers(self, status: int = 200) -> None:
+    def _headers(self, status: int = 200, content_type: str = "application/json; charset=utf-8", content_length: int | None = None) -> None:
         self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         origin = self.headers.get("Origin")
         if "*" in ALLOWED_ORIGINS:
             self.send_header("Access-Control-Allow-Origin", "*")
         elif origin in ALLOWED_ORIGINS:
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
         self.send_header("X-Content-Type-Options", "nosniff")
+        if content_length is not None:
+            self.send_header("Content-Length", str(content_length))
         self.end_headers()
 
     def _client_ip(self) -> str:
@@ -324,6 +360,11 @@ class Handler(BaseHTTPRequestHandler):
                 body = infer(payload) if self.path == "/infer" else estimate_eigenvalue(payload)
             finally:
                 INFERENCE_SLOTS.release()
+            if self.path == "/infer":
+                encoded = encode_inference_binary(body)
+                self._headers(content_type="application/octet-stream", content_length=len(encoded))
+                self.wfile.write(encoded)
+                return
             self._headers(); self.wfile.write(json.dumps(body, separators=(",", ":")).encode())
         except RuntimeError as exc:
             self._headers(409); self.wfile.write(json.dumps({"error": str(exc), "offline": True}).encode())

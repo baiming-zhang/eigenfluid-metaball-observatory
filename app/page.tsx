@@ -9,6 +9,7 @@ type Method = "potential" | "velocity" | "vorticity" | "fd_laplacian";
 type Sphere = [number, number, number, number];
 type BoundaryMode = "mask" | "wire" | "hidden";
 type Inference = {
+  request_id: number;
   method: Method;
   mode: number;
   component: string;
@@ -16,12 +17,40 @@ type Inference = {
   scale: number;
   elapsed_ms: number;
   fluid_fraction: number;
-  cloud: number[][];
-  volume: number[];
-  slices: Record<"x" | "y" | "z", number[][]>;
-  vector_slices: Record<"x" | "y" | "z", number[][][]>;
+  cloud: Float32Array;
+  volume: Float32Array;
+  slices: Record<"x" | "y" | "z", Float32Array>;
+  vector_slices: Record<"x" | "y" | "z", Float32Array>;
   contract: string;
 };
+
+type Timings = { inference: number | null; network: number | null; parse: number | null; isosurface: number | null; render: number | null };
+type IsoGeometry = { positions: Float32Array; normals: Float32Array };
+type IsoResult = { mode: IsoGeometry | null; obstacle: IsoGeometry | null };
+type BinaryArray = { offset: number; length: number; shape: number[] };
+type BinaryHeader = Omit<Inference, "request_id" | "cloud" | "volume" | "slices" | "vector_slices"> & { format: string; arrays: Record<string, BinaryArray> };
+
+const EMPTY_TIMINGS: Timings = { inference: null, network: null, parse: null, isosurface: null, render: null };
+
+function parseInferenceBinary(buffer: ArrayBuffer, requestId: number): Inference {
+  const headerLength = new DataView(buffer).getUint32(0, true);
+  const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 4, headerLength))) as BinaryHeader;
+  if (header.format !== "eigenfluid-fp32-v1") throw new Error("Unsupported inference payload");
+  const payloadOffset = (4 + headerLength + 3) & ~3;
+  const read = (name: string) => {
+    const descriptor = header.arrays[name];
+    if (!descriptor) throw new Error(`Missing binary field: ${name}`);
+    return new Float32Array(buffer, payloadOffset + descriptor.offset, descriptor.length);
+  };
+  return {
+    request_id: requestId, method: header.method, mode: header.mode, component: header.component,
+    grid: header.grid, scale: header.scale, elapsed_ms: header.elapsed_ms,
+    fluid_fraction: header.fluid_fraction, contract: header.contract,
+    cloud: read("cloud"), volume: read("volume"),
+    slices: { x: read("slices.x"), y: read("slices.y"), z: read("slices.z") },
+    vector_slices: { x: read("vector_slices.x"), y: read("vector_slices.y"), z: read("vector_slices.z") },
+  };
+}
 
 const METHODS: { id: Method; short: string; name: string; meta: string; metric: string }[] = [
   { id: "potential", short: "P", name: "Potential", meta: "∫|∇A|² / ∫|A|²", metric: "λ̄val 1,462.26" },
@@ -44,19 +73,19 @@ function tone(value: number) {
   return `hsl(211 78% ${92 - 48 * -v}%)`;
 }
 
-function Slice({ axis, values, spheres }: { axis: "x" | "y" | "z"; values?: number[][]; spheres: Sphere[] }) {
+function Slice({ axis, values, spheres }: { axis: "x" | "y" | "z"; values?: Float32Array; spheres: Sphere[] }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas || !values?.length) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const n = values.length;
+    const n = Math.round(Math.sqrt(values.length));
     canvas.width = n;
     canvas.height = n;
     const image = ctx.createImageData(n, n);
     for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-      const v = Math.max(-1, Math.min(1, values[n - 1 - y][x]));
+        const v = Math.max(-1, Math.min(1, values[(n - 1 - y) * n + x]));
       const t = Math.abs(v);
       const cold = [36, 104, 171], hot = [197, 51, 62], paper = [244, 241, 235];
       const target = v >= 0 ? hot : cold;
@@ -156,15 +185,15 @@ function obstacleContourPath(axis: "x" | "y" | "z", spheres: Sphere[]) {
   return path.join(" ");
 }
 
-function VectorSlice({ axis, vectors, spheres }: { axis: "x" | "y" | "z"; vectors?: number[][][]; spheres: Sphere[] }) {
+function VectorSlice({ axis, vectors, spheres }: { axis: "x" | "y" | "z"; vectors?: Float32Array; spheres: Sphere[] }) {
   const boundary = useMemo(() => obstacleContourPath(axis, spheres), [axis, spheres]);
   const arrows = useMemo(() => {
     if (!vectors?.length) return [];
-    const n = vectors.length, step = Math.max(1, Math.floor(n / 13));
+    const n = Math.round(Math.sqrt(vectors.length / 3)), step = Math.max(1, Math.floor(n / 13));
     const result: { x1: number; y1: number; x2: number; y2: number; opacity: number }[] = [];
     for (let row = Math.floor(step / 2); row < n; row += step) for (let column = Math.floor(step / 2); column < n; column += step) {
-      const value = vectors[row]?.[column];
-      if (!value) continue;
+      const base = (row * n + column) * 3;
+      const value = [vectors[base], vectors[base + 1], vectors[base + 2]];
       const projected = axis === "x" ? [value[2], -value[1]] : axis === "y" ? [value[2], -value[0]] : [value[1], -value[0]];
       const magnitude = Math.hypot(projected[0], projected[1]);
       if (magnitude < 0.035) continue;
@@ -200,6 +229,16 @@ function buildMetaballObstacle(spheres: Sphere[]) {
   return buildIsoSurface(values, resolution, 0x1e5f8a, 1, value => value, 1);
 }
 
+function buildIsoMesh(data: IsoGeometry, color: number, opacity: number) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(data.positions, 3));
+  geometry.setAttribute("normal", new THREE.BufferAttribute(data.normals, 3));
+  const material = new THREE.MeshStandardMaterial({ color, roughness: 0.38, metalness: 0.04, transparent: opacity < 1, opacity, side: THREE.DoubleSide, depthWrite: opacity > 0.8 });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.scale.setScalar(0.5);
+  return mesh;
+}
+
 function buildOuterBoundary(mode: Exclude<BoundaryMode, "hidden">) {
   const geometry = new RoundedBoxGeometry(1, 1, 1, 10, 0.16);
   if (mode === "wire") return new THREE.LineSegments(
@@ -209,11 +248,32 @@ function buildOuterBoundary(mode: Exclude<BoundaryMode, "hidden">) {
   return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color:0xd7dad8, transparent:true, opacity:0.18, side:THREE.DoubleSide, depthWrite:false }));
 }
 
-function FieldScene({ data, spheres, solidObstacle, surfaceModes, boundaryMode }: { data: Inference | null; spheres: Sphere[]; solidObstacle: boolean; surfaceModes: boolean; boundaryMode: BoundaryMode }) {
+function FieldScene({ data, spheres, solidObstacle, surfaceModes, boundaryMode, onTiming }: { data: Inference | null; spheres: Sphere[]; solidObstacle: boolean; surfaceModes: boolean; boundaryMode: BoundaryMode; onTiming: (timing: Partial<Timings>) => void }) {
   const mount = useRef<HTMLDivElement>(null);
+  const [isoResult, setIsoResult] = useState<IsoResult>({ mode: null, obstacle: null });
+  useEffect(() => {
+    const needsMode = Boolean(surfaceModes && data?.volume.length);
+    if (!solidObstacle && !needsMode) {
+      setIsoResult({ mode: null, obstacle: null });
+      onTiming({ isosurface: 0 });
+      return;
+    }
+    setIsoResult({ mode: null, obstacle: null });
+    onTiming({ isosurface: null, render: null });
+    const worker = new Worker(new URL("./isosurface.worker.ts", import.meta.url), { type: "module" });
+    const modeBuffer = needsMode ? data!.volume.slice().buffer as ArrayBuffer : null;
+    worker.onmessage = (event: MessageEvent<IsoResult & { elapsedMs: number }>) => {
+      setIsoResult({ mode: event.data.mode, obstacle: event.data.obstacle });
+      onTiming({ isosurface: event.data.elapsedMs });
+    };
+    worker.postMessage({ mode: modeBuffer ? { values: modeBuffer, resolution: data!.grid } : null, obstacle: solidObstacle ? { spheres, resolution: 42 } : null }, modeBuffer ? [modeBuffer] : []);
+    return () => worker.terminate();
+  }, [data, spheres, solidObstacle, surfaceModes, onTiming]);
+
   useEffect(() => {
     const host = mount.current;
     if (!host) return;
+    const renderStarted = performance.now();
     const width = host.clientWidth, height = host.clientHeight;
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#edeae2");
@@ -242,18 +302,17 @@ function FieldScene({ data, spheres, solidObstacle, surfaceModes, boundaryMode }
       mesh.position.set(s[0] - 0.5, s[1] - 0.5, s[2] - 0.5);
       group.add(mesh);
     });
-    if (solidObstacle) group.add(buildMetaballObstacle(spheres));
-    if (surfaceModes && data?.volume?.length) {
-      group.add(buildIsoSurface(data.volume, data.grid, 0xbd3b48, 0.42, value => Math.abs(value), 0.78));
-    }
+    if (solidObstacle && isoResult.obstacle) group.add(buildIsoMesh(isoResult.obstacle, 0x1e5f8a, 1));
+    if (surfaceModes && isoResult.mode) group.add(buildIsoMesh(isoResult.mode, 0xbd3b48, 0.78));
     if (!surfaceModes && data?.cloud?.length) {
-      const positions = new Float32Array(data.cloud.length * 3);
-      const colors = new Float32Array(data.cloud.length * 3);
-      data.cloud.forEach((p, i) => {
-        positions[3 * i] = p[0] - 0.5; positions[3 * i + 1] = p[1] - 0.5; positions[3 * i + 2] = p[2] - 0.5;
-        const color = new THREE.Color(tone(p[3]));
+      const count = data.cloud.length / 4;
+      const positions = new Float32Array(count * 3);
+      const colors = new Float32Array(count * 3);
+      for (let i = 0; i < count; i++) {
+        positions[3 * i] = data.cloud[4 * i] - 0.5; positions[3 * i + 1] = data.cloud[4 * i + 1] - 0.5; positions[3 * i + 2] = data.cloud[4 * i + 2] - 0.5;
+        const color = new THREE.Color(tone(data.cloud[4 * i + 3]));
         colors[3 * i] = color.r; colors[3 * i + 1] = color.g; colors[3 * i + 2] = color.b;
-      });
+      }
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
       geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
@@ -265,13 +324,15 @@ function FieldScene({ data, spheres, solidObstacle, surfaceModes, boundaryMode }
     const move = (e: PointerEvent) => { if (!dragging) return; group.rotation.y += (e.clientX - previousX) * 0.008; group.rotation.x += (e.clientY - previousY) * 0.006; previousX = e.clientX; previousY = e.clientY; };
     const up = () => { dragging = false; };
     renderer.domElement.addEventListener("pointerdown", down); renderer.domElement.addEventListener("pointermove", move); renderer.domElement.addEventListener("pointerup", up);
+    renderer.render(scene, camera);
+    const timingFrame = requestAnimationFrame(() => onTiming({ render: performance.now() - renderStarted }));
     let frame = 0;
     const draw = () => { frame = requestAnimationFrame(draw); renderer.render(scene, camera); };
     draw();
     const resize = () => { const w = host.clientWidth, h = host.clientHeight; camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h); };
     const observer = new ResizeObserver(resize); observer.observe(host);
-    return () => { cancelAnimationFrame(frame); observer.disconnect(); renderer.dispose(); host.removeChild(renderer.domElement); };
-  }, [data, spheres, solidObstacle, surfaceModes, boundaryMode]);
+    return () => { cancelAnimationFrame(frame); cancelAnimationFrame(timingFrame); observer.disconnect(); renderer.dispose(); host.removeChild(renderer.domElement); };
+  }, [data, spheres, solidObstacle, surfaceModes, boundaryMode, isoResult, onTiming]);
   return <div className="scene" ref={mount}><span className="scene-hint">drag to orbit</span></div>;
 }
 
@@ -288,7 +349,9 @@ export default function Home() {
   const [eigenvalue, setEigenvalue] = useState<number | null>(null);
   const [eigenBusy, setEigenBusy] = useState(false);
   const [status, setStatus] = useState("Loading exact checkpoint…");
+  const [timings, setTimings] = useState<Timings>(EMPTY_TIMINGS);
   const [busy, setBusy] = useState(false);
+  const requestSequence = useRef(0);
   const [solidObstacle, setSolidObstacle] = useState(true);
   const [surfaceModes, setSurfaceModes] = useState(true);
   const [boundaryMode, setBoundaryMode] = useState<BoundaryMode>("mask");
@@ -299,6 +362,7 @@ export default function Home() {
     setSpheres(current => current.map((sphere, i) => i === index ? sphere.map((v, j) => j === field ? value : v) as Sphere : sphere));
   }, []);
   const requestBody = useMemo(() => ({ method, mode, component, spheres }), [method, mode, component, spheres]);
+  const recordVisualTiming = useCallback((timing: Partial<Timings>) => setTimings(current => ({ ...current, ...timing })), []);
   useEffect(() => {
     let active = true;
     const check = async () => {
@@ -315,19 +379,34 @@ export default function Home() {
     return () => { active = false; clearInterval(timer); };
   }, []);
   useEffect(() => {
+    const requestId = ++requestSequence.current;
     const controller = new AbortController();
+    setData(null);
     setEigenvalue(null);
     setEigenBusy(false);
+    setTimings(EMPTY_TIMINGS);
     const timer = window.setTimeout(async () => {
       setBusy(true); setStatus(method === "fd_laplacian" ? "Checking Ritz availability…" : "Evaluating selected mode…");
       try {
-        const response = await fetch("/infer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(requestBody), signal: controller.signal });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || "Inference failed");
-        setData(result); setStatus(`Inference Time · ${result.elapsed_ms.toFixed(0)} ms`);
+        const requestStarted = performance.now();
+        const response = await fetch("/infer", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/octet-stream" }, body: JSON.stringify(requestBody), signal: controller.signal });
+        const binary = await response.arrayBuffer();
+        const responseReceived = performance.now();
+        if (!response.ok) {
+          let message = "Inference failed";
+          try { message = JSON.parse(new TextDecoder().decode(binary)).error || message; } catch { /* keep fallback */ }
+          throw new Error(message);
+        }
+        const parseStarted = performance.now();
+        const result = parseInferenceBinary(binary, requestId);
+        const parseMs = performance.now() - parseStarted;
+        if (requestId !== requestSequence.current) return;
+        setData(result);
+        setTimings({ inference: result.elapsed_ms, network: Math.max(0, responseReceived - requestStarted - result.elapsed_ms), parse: parseMs, isosurface: null, render: null });
+        setStatus("Ready");
       } catch (error) {
-        if ((error as Error).name !== "AbortError") { setStatus((error as Error).message); if (method === "fd_laplacian") setData(null); }
-      } finally { if (!controller.signal.aborted) setBusy(false); }
+        if ((error as Error).name !== "AbortError" && requestId === requestSequence.current) { setStatus((error as Error).message); if (method === "fd_laplacian") setData(null); }
+      } finally { if (requestId === requestSequence.current) setBusy(false); }
     }, 280);
     return () => { clearTimeout(timer); controller.abort(); };
   }, [requestBody, method]);
@@ -390,8 +469,8 @@ export default function Home() {
       </aside>
 
       <div className="visuals">
-        <div className="visual-head"><div><span className="method-symbol">{active.short}</span><h2>{active.name} <b>mode {mode + 1}</b></h2></div><div className={busy ? "status busy" : "status"}><i />{status}</div></div>
-        <FieldScene data={data} spheres={spheres} solidObstacle={solidObstacle} surfaceModes={surfaceModes} boundaryMode={boundaryMode} />
+          <div className="visual-head"><div><span className="method-symbol">{active.short}</span><h2>{active.name} <b>mode {mode + 1}</b></h2></div><div className={busy ? "status busy" : "status"}><i />{timings.inference === null ? <span>{status}</span> : <><span className="inference-time">Inference Time · {timings.inference.toFixed(0)} ms</span><span className="pipeline-times">Network {timings.network?.toFixed(0) ?? "…"} ms · Parse {timings.parse?.toFixed(1) ?? "…"} ms · Isosurface {timings.isosurface?.toFixed(0) ?? "…"} ms · Render {timings.render?.toFixed(0) ?? "…"} ms</span></>}</div></div>
+          <FieldScene data={data} spheres={spheres} solidObstacle={solidObstacle} surfaceModes={surfaceModes} boundaryMode={boundaryMode} onTiming={recordVisualTiming} />
         <div className="legend vector-legend"><span className="legend-line mode-line"/>mode / vector field<span className="legend-line obstacle-line"/>obstacle<span className="legend-line boundary-line"/>outer boundary<small>SVG vector slices</small></div>
         <div className="slice-row"><VectorSlice axis="x" vectors={data?.vector_slices.x} spheres={spheres}/><VectorSlice axis="y" vectors={data?.vector_slices.y} spheres={spheres}/><VectorSlice axis="z" vectors={data?.vector_slices.z} spheres={spheres}/></div>
       </div>
