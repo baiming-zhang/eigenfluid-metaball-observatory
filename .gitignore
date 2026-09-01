@@ -41,6 +41,9 @@ next-env.d.ts
 /outputs/
 /work/
 /runtime_logs/
+__pycache__/
+*.py[cod]
+*.log
 *.lnk
 /results_archive/fd_laplacian/system/global_vector_modes_6144_to_2048.npz
 !.env.example
