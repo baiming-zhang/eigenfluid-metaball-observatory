@@ -31,6 +31,7 @@ type BinaryArray = { offset: number; length: number; shape: number[] };
 type BinaryHeader = Omit<Inference, "request_id" | "cloud" | "volume" | "slices" | "vector_slices"> & { format: string; arrays: Record<string, BinaryArray> };
 
 const EMPTY_TIMINGS: Timings = { inference: null, network: null, parse: null, isosurface: null, render: null };
+const LOCAL_BUILD = process.env.NEXT_PUBLIC_LOCAL_BUILD === "1";
 
 function parseInferenceBinary(buffer: ArrayBuffer, requestId: number): Inference {
   const headerLength = new DataView(buffer).getUint32(0, true);
@@ -364,6 +365,7 @@ export default function Home() {
   const requestBody = useMemo(() => ({ method, mode, component, spheres }), [method, mode, component, spheres]);
   const recordVisualTiming = useCallback((timing: Partial<Timings>) => setTimings(current => ({ ...current, ...timing })), []);
   useEffect(() => {
+    if (LOCAL_BUILD) return;
     let active = true;
     const check = async () => {
       try {
@@ -435,8 +437,8 @@ export default function Home() {
 
   return <main>
     <header className="masthead">
-      <div className="brand"><span className="mark">E</span><div><strong>EIGENFLUID / METABALL</strong><small>K = 2,048 transfer basis observatory</small></div><div className={`server-health ${serverOnline === null ? "checking" : serverOnline ? "online" : "offline"}`}><i />{serverOnline === null ? "Checking inference server" : serverOnline ? "Inference server available" : "Inference server NOT available"}</div></div>
-      <nav><a href="#explorer">Explorer</a><a href="#archive">Archive</a><a href="/paper/isovorticity_3d_30frames.mp4">Paper video ↗</a></nav>
+      <div className="brand"><span className="mark">E</span><div><strong>EIGENFLUID / METABALL</strong><small>K = 2,048 transfer basis observatory</small></div>{!LOCAL_BUILD && <div className={`server-health ${serverOnline === null ? "checking" : serverOnline ? "online" : "offline"}`}><i />{serverOnline === null ? "Checking inference server" : serverOnline ? "Inference server available" : "Inference server NOT available"}</div>}</div>
+      <nav><a href="#explorer">Explorer</a><a href="#archive">Archive</a><a href="/paper/isovorticity_3d_30frames.mp4">Paper video ↗</a>{!LOCAL_BUILD && <a href="https://github.com/baiming-zhang/eigenfluid-metaball-observatory/releases/download/local-v1/eigenfluid-local-inference-windows.zip">Local inference ↓</a>}</nav>
     </header>
 
     <section className="hero">
@@ -469,7 +471,7 @@ export default function Home() {
       </aside>
 
       <div className="visuals">
-          <div className="visual-head"><div><span className="method-symbol">{active.short}</span><h2>{active.name} <b>mode {mode + 1}</b></h2></div><div className={busy ? "status busy" : "status"}><i />{timings.inference === null ? <span>{status}</span> : <><span className="inference-time">Inference Time · {timings.inference.toFixed(0)} ms</span><span className="pipeline-times">Network {timings.network?.toFixed(0) ?? "…"} ms · Parse {timings.parse?.toFixed(1) ?? "…"} ms · Isosurface {timings.isosurface?.toFixed(0) ?? "…"} ms · Render {timings.render?.toFixed(0) ?? "…"} ms</span></>}</div></div>
+          <div className="visual-head"><div><span className="method-symbol">{active.short}</span><h2>{active.name} <b>mode {mode + 1}</b></h2></div><div className={busy ? "status busy" : "status"}><i />{timings.inference === null ? <span>{status}</span> : <><span className="inference-time">Inference Time · {timings.inference.toFixed(0)} ms</span>{!LOCAL_BUILD && <span className="pipeline-times">Network {timings.network?.toFixed(0) ?? "…"} ms · Parse {timings.parse?.toFixed(1) ?? "…"} ms · Isosurface {timings.isosurface?.toFixed(0) ?? "…"} ms · Render {timings.render?.toFixed(0) ?? "…"} ms</span>}</>}</div></div>
           <FieldScene data={data} spheres={spheres} solidObstacle={solidObstacle} surfaceModes={surfaceModes} boundaryMode={boundaryMode} onTiming={recordVisualTiming} />
         <div className="legend vector-legend"><span className="legend-line mode-line"/>mode / vector field<span className="legend-line obstacle-line"/>obstacle<span className="legend-line boundary-line"/>outer boundary<small>SVG vector slices</small></div>
         <div className="slice-row"><VectorSlice axis="x" vectors={data?.vector_slices.x} spheres={spheres}/><VectorSlice axis="y" vectors={data?.vector_slices.y} spheres={spheres}/><VectorSlice axis="z" vectors={data?.vector_slices.z} spheres={spheres}/></div>

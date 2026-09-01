@@ -40,6 +40,8 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+/artifacts/
+/local_bundle/
 /runtime_logs/
 __pycache__/
 *.py[cod]
