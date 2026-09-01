@@ -6,6 +6,7 @@ $ErrorActionPreference = "Stop"
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $StageRoot = Join-Path $Repo "local_bundle"
 $Stage = Join-Path $StageRoot "eigenfluid-local-inference"
+$LocalOut = Join-Path $Repo "out-local"
 $Artifacts = Join-Path $Repo "artifacts"
 $Archive = Join-Path $Artifacts $ArchiveName
 
@@ -26,7 +27,15 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Local frontend build failed." }
     Pop-Location
 
-    Copy-Item -LiteralPath (Join-Path $Repo "out") -Destination (Join-Path $Stage "out") -Recurse
+    if (Test-Path -LiteralPath $LocalOut) {
+        $resolvedLocalOut = (Resolve-Path -LiteralPath $LocalOut).Path
+        if (-not $resolvedLocalOut.StartsWith($Repo, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to remove an unexpected local output path: $resolvedLocalOut"
+        }
+        Remove-Item -LiteralPath $resolvedLocalOut -Recurse -Force
+    }
+    Copy-Item -LiteralPath (Join-Path $Repo "out") -Destination $LocalOut -Recurse
+    Copy-Item -LiteralPath $LocalOut -Destination (Join-Path $Stage "out") -Recurse
     New-Item -ItemType Directory -Path (Join-Path $Stage "backend") -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $Repo "backend\inference_server.py") -Destination (Join-Path $Stage "backend\inference_server.py")
     foreach ($method in @("potential", "velocity", "vorticity")) {

@@ -17,6 +17,7 @@
 /.next/
 /.vinext/
 /out/
+/out-local/
 
 # misc
 .DS_Store

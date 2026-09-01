@@ -330,8 +330,11 @@ class Handler(BaseHTTPRequestHandler):
             body = {"ok": len(HEADERS) == 3, "models": HEADERS, "grid": GRID_N}
             self.wfile.write(json.dumps(body).encode()); return
         relative = self.path.split("?", 1)[0].lstrip("/") or "index.html"
-        candidate = (ROOT / "out" / relative).resolve()
-        static_root = (ROOT / "out").resolve()
+        host = self.headers.get("Host", "").lower()
+        local_host = host.startswith("127.0.0.1") or host.startswith("localhost") or host.startswith("[::1]")
+        local_root = ROOT / "out-local"
+        static_root = (local_root if local_host and local_root.exists() else ROOT / "out").resolve()
+        candidate = (static_root / relative).resolve()
         if static_root not in candidate.parents and candidate != static_root:
             self.send_error(403); return
         if candidate.is_dir():
