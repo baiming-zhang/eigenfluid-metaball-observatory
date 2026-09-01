@@ -356,13 +356,12 @@ export default function Home() {
 
   return <main>
     <header className="masthead">
-      <div className="brand"><span className="mark">E</span><div><strong>EIGENFLUID / METABALL</strong><small>K = 2,048 transfer basis observatory</small></div></div>
+      <div className="brand"><span className="mark">E</span><div><strong>EIGENFLUID / METABALL</strong><small>K = 2,048 transfer basis observatory</small></div><div className={`server-health ${serverOnline === null ? "checking" : serverOnline ? "online" : "offline"}`}><i />{serverOnline === null ? "Checking inference server" : serverOnline ? "Inference server available" : "Inference server NOT available"}</div></div>
       <nav><a href="#explorer">Explorer</a><a href="#archive">Archive</a><a href="/paper/isovorticity_3d_30frames.mp4">Paper video ↗</a></nav>
     </header>
 
     <section className="hero">
       <h1>Shape the domain.<br/><i>Watch the basis respond.</i></h1>
-      <div className={`server-health ${serverOnline === false ? "offline" : ""}`}><i />{serverOnline === null ? "Checking inference" : serverOnline ? "Inference available" : "Inference unavailable"}</div>
     </section>
 
     <section id="explorer" className="workspace">
