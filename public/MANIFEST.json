@@ -1,0 +1,22 @@
+{
+  "package": "3d-metaball-k2048-paper-and-live-inference",
+  "created": "2026-09-02",
+  "scope": "Compact reproducibility package; excludes full 128^3 basis chunks, candidate caches, optimizer moments and duplicated checkpoints.",
+  "models": {
+    "potential": { "path": "models/potential/epoch_2000.bin", "bytes": 92872744, "sha256": "23db0ab22937bdd75915c786c1f20fa8e5841ea770f20fe17016a83d8e601bae" },
+    "velocity": { "path": "models/velocity/epoch_2000.bin", "bytes": 92872744, "sha256": "66935950263f14e5032d12273a6b06389dfdd7a1e7c26b98e2982341b964024a" },
+    "vorticity": { "path": "models/vorticity/epoch_2000.bin", "bytes": 92872744, "sha256": "8936b85a872a35214cd3d729292f37ce846655e5a48abe09a6cf8cf316087070" }
+  },
+  "fd_laplacian": {
+    "construction": "2048 scalar shapes x 3 tensor polarizations = 6144 candidates; one global generalized Ritz solve; retain 2048 complete vector modes",
+    "global_transform": { "path": "results_archive/fd_laplacian/system/global_vector_modes_6144_to_2048.npz", "bytes": 100732728, "sha256": "c53d2808e1888957d728d7d1801bf7f0b58fbcf8ecb84819660ae400901d9022" },
+    "retained_gram": { "path": "results_archive/fd_laplacian/system/retained_velocity_gram_unweighted.npz", "bytes": 67144668, "sha256": "e2dc9ba2ea624b3d37ceda5aa8d0ad0ba9b9312626435bd7002586e3aca084cc" },
+    "note": "The FD-Laplacian basis is geometry-specific and is therefore archived as an exact reference, not exposed as a learned live geometry map."
+  },
+  "live_protocol": {
+    "network": "15-32-32-32-32-3 SIREN",
+    "frequencies": [6, 36, 36, 36],
+    "boundary": "squared transfer envelope; second-order boundary zero",
+    "render": "exact checkpoint forward followed by compact finite-difference preview of u=div(A)"
+  }
+}

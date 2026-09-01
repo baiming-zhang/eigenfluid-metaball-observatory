@@ -1,0 +1,15 @@
+node_modules
+.next
+out
+runtime_logs
+.git
+results_archive
+reproducibility
+tests
+paper_assets
+examples
+db
+drizzle
+worker
+*.lnk
+*.log

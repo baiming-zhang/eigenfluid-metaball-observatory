@@ -1,0 +1,86 @@
+[2026-09-01 04:42:28] reuse complete fast spatial-major gradient basis
+[2026-09-01 04:42:29] reuse complete strict e*phi_D candidate vorticity cache
+[2026-09-01 04:42:29] reuse complete fast candidate-vorticity transpose
+[2026-09-01 04:42:30] reuse complete rank-revealing global generalized eigensolve
+[2026-09-01 04:42:31] reuse retained velocity basis chunk 1/7
+[2026-09-01 04:42:31] reuse retained velocity basis chunk 2/7
+[2026-09-01 04:42:31] reuse retained velocity basis chunk 3/7
+[2026-09-01 04:42:31] reuse retained velocity basis chunk 4/7
+[2026-09-01 04:42:31] reuse retained velocity basis chunk 5/7
+[2026-09-01 04:42:31] reuse retained velocity basis chunk 6/7
+[2026-09-01 04:42:31] reuse retained velocity basis chunk 7/7
+[2026-09-01 04:42:34] evaluated retained Gram block 1/7
+[2026-09-01 04:42:38] evaluated retained Gram block 2/7
+[2026-09-01 04:42:41] evaluated retained Gram block 3/7
+[2026-09-01 04:42:44] evaluated retained Gram block 4/7
+[2026-09-01 04:42:48] evaluated retained Gram block 5/7
+[2026-09-01 04:42:51] evaluated retained Gram block 6/7
+[2026-09-01 04:42:52] evaluated retained Gram block 7/7
+{
+  "complete": true,
+  "method": "strict matched FD-Lap global vector Rayleigh-Ritz",
+  "source_scalar_shapes": 2048,
+  "tensor_polarizations_per_shape": 3,
+  "trial_vector_candidates": 6144,
+  "global_ritz_retained_modes": 2048,
+  "independent_coefficients": 2048,
+  "local_polarization_collapse": false,
+  "grid": [
+    128,
+    128,
+    128
+  ],
+  "fluid_nodes": 1599754,
+  "candidate_mass_audit": {
+    "mass_min_eigenvalue": -0.04630668974959711,
+    "mass_max_eigenvalue": 843.3211314906687,
+    "mass_condition_number_abs": 18211.647950888262,
+    "mass_numerical_rank_1e_minus_10": 5936,
+    "mass_dimension": 6144,
+    "no_mode_selection": true
+  },
+  "candidate_stiffness_audit": {
+    "trace": 4429438957.041,
+    "frobenius_norm": 78668039.25033192,
+    "symmetry_max_abs": 0.0,
+    "dimension": 6144
+  },
+  "global_eigen_audit": {
+    "solver": "rank-revealing mass whitening followed by global standard symmetric eigensolve",
+    "regularization": 0.0,
+    "candidate_dimension": 6144,
+    "mass_numerical_rank": 5936,
+    "discarded_numerical_null_directions": 208,
+    "mass_rank_relative_threshold": 1e-10,
+    "mass_rank_absolute_threshold": 8.433211314906691e-08,
+    "mass_eigenvalue_min_raw": -0.04630668974958128,
+    "mass_eigenvalue_min_retained": 0.0001121878792342148,
+    "mass_eigenvalue_max": 843.321131490669,
+    "eigenvalue_min": 130.81066965731648,
+    "eigenvalue_max": 2177.0787042079814,
+    "mass_orthogonality_max_abs": 1.9761969838327786e-14,
+    "generalized_eigen_relative_residual": 0.00032640979134000546,
+    "trial_candidates": 6144,
+    "retained_complete_vector_modes": 2048
+  },
+  "evaluated_retained_basis_audit": {
+    "source": "direct full-grid accumulation from evaluated retained basis chunks",
+    "weighted_mass_min_eigenvalue": 1.0001192113621657,
+    "weighted_mass_max_eigenvalue": 1.0181954162142883,
+    "weighted_mass_condition_number": 1.018074050219976,
+    "mass_identity_max_abs": 0.008027313509956002,
+    "projection_normal_relative_residual": 8.622274635527545e-16,
+    "fem_gt_velocity_relative_l2": 0.05882948597529178,
+    "seconds": 21.354741100221872
+  },
+  "predicted_fem_gt_velocity_relative_l2": 0.05882948597529178,
+  "latest_fem_gt_velocity_npy_sha256": "56f092b3d90de008921eb890b1bcf23c8dd2d4356fcd1cae6184d8557c0a12c5",
+  "basis": {
+    "complete": true,
+    "chunks": 7,
+    "basis": "D:\\zbm\\3d_metaball_transfer\\results\\fd_lap_strict_global_ritz_A2048_k2048_full128\\basis_chunks",
+    "seconds": 0.15760760009288788
+  },
+  "gram": "D:\\zbm\\3d_metaball_transfer\\results\\fd_lap_strict_global_ritz_A2048_k2048_full128\\system\\retained_velocity_gram_unweighted.npz",
+  "wall_seconds": 24.30430279672146
+}

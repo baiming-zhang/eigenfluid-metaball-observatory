@@ -1,0 +1,71 @@
+{
+  "complete": true,
+  "method": "vorticity_rayleigh",
+  "label": "Vorticity",
+  "modes": 2048,
+  "independent_coefficients": 2048,
+  "one_q_per_complete_mode": true,
+  "grid": [
+    128,
+    128,
+    128
+  ],
+  "fluid_nodes": 1599754,
+  "quadrature_points": 32768,
+  "volume_quadrature_weight": 2.3279484594240785e-05,
+  "vorticity_operator": "common 128^3 second-order central FD curl",
+  "generalized_ritz": {
+    "operator_assembly_seconds": 0.06679389998316765,
+    "generalized_eigensolve_seconds": 1.068187601864338,
+    "mass_condition_number": 11285300.119795995,
+    "mass_eigenvalue_min": 3.7782706041951593e-06,
+    "mass_eigenvalue_max": 42.63891770214532,
+    "ritz_lambda_min": -891.2304708823061,
+    "ritz_lambda_max": 14839.201806010784,
+    "mass_orthogonality_max_abs": 5.75463010576982e-11,
+    "generalized_eigen_relative_residual": 2.1790702415816273e-13,
+    "regularization": 0.0,
+    "quadrature_points": 32768
+  },
+  "rollout": {
+    "coefficient_rollout_seconds": 1.8405324965715408,
+    "coefficient_seconds_per_saved_interval": 0.06346663781281175,
+    "internal_substeps": 290,
+    "total_newton_iterations": 290,
+    "total_gmres_iterations": 0,
+    "maximum_newton_relative_residual": 8.009970429156965e-07,
+    "maximum_inviscid_energy_relative_drift": 4.267914201267229e-06,
+    "initial_advection_tangency_defect": 1.591105672395745e-08,
+    "integrator": "exact viscous half step + implicit trapezoidal advection + exact viscous half step",
+    "nonlinear_solver": "Newton-GMRES",
+    "external_force": 0.0
+  },
+  "errors": {
+    "frame0_velocity_relative_l2": 0.8329941059031287,
+    "frame0_vorticity_relative_l2_common_fd_curl": 1.1604294726236106,
+    "predicted_frames_mean_velocity_relative_l2": 0.8829007487878842,
+    "predicted_frames_mean_vorticity_relative_l2_common_fd_curl": 1.1656706955321374,
+    "final_velocity_relative_l2": 0.946925109588777,
+    "final_vorticity_relative_l2_common_fd_curl": 1.187195217455524
+  },
+  "timing_seconds": {
+    "basis_file_audit_seconds": 0.011634398251771927,
+    "basis_cache_read_and_quadrature_extraction_seconds": 265.5549971982837,
+    "gram_cache_load_seconds": 0.20219819992780685,
+    "full128_rhs_seconds": 197.24683490023017,
+    "unregularized_cholesky_solve_seconds": 0.16708509996533394,
+    "relative_normal_residual": 1.8591391728822164e-13,
+    "all_fluid_nodes": 1599754,
+    "regularization": 0.0,
+    "operator_assembly_seconds": 0.06679389998316765,
+    "generalized_eigensolve_seconds": 1.068187601864338,
+    "canonical_basis_transform_seconds": 0.0587507002055645,
+    "fp32_mass_orthogonality_max_abs": 2.3692448139190674,
+    "coefficient_rollout_seconds": 1.8405324965715408,
+    "full128_reconstruction_seconds": 20.0038402043283,
+    "common_fd_curl_seconds": 4.513982303440571,
+    "metric_computation_seconds": 6.9359146021306515,
+    "active_total_seconds": 497.6707516051829
+  },
+  "observed_wall_seconds_this_invocation": 246.16262179985642
+}
