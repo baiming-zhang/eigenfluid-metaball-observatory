@@ -10,6 +10,7 @@ type Sphere = [number, number, number, number];
 type BoundaryMode = "mask" | "wire" | "hidden";
 type Inference = {
   request_id: number;
+  request_key: string;
   method: Method;
   mode: number;
   component: string;
@@ -26,14 +27,14 @@ type Inference = {
 
 type Timings = { inference: number | null; network: number | null; parse: number | null; isosurface: number | null; render: number | null };
 type IsoGeometry = { positions: Float32Array; normals: Float32Array };
-type IsoResult = { mode: IsoGeometry | null; obstacle: IsoGeometry | null };
+type ObstacleGeometry = IsoGeometry & { key: string };
 type BinaryArray = { offset: number; length: number; shape: number[] };
 type BinaryHeader = Omit<Inference, "request_id" | "cloud" | "volume" | "slices" | "vector_slices"> & { format: string; arrays: Record<string, BinaryArray> };
 
 const EMPTY_TIMINGS: Timings = { inference: null, network: null, parse: null, isosurface: null, render: null };
 const LOCAL_BUILD = process.env.NEXT_PUBLIC_LOCAL_BUILD === "1";
 
-function parseInferenceBinary(buffer: ArrayBuffer, requestId: number): Inference {
+function parseInferenceBinary(buffer: ArrayBuffer, requestId: number, requestKey: string): Inference {
   const headerLength = new DataView(buffer).getUint32(0, true);
   const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 4, headerLength))) as BinaryHeader;
   if (header.format !== "eigenfluid-fp32-v1") throw new Error("Unsupported inference payload");
@@ -44,7 +45,7 @@ function parseInferenceBinary(buffer: ArrayBuffer, requestId: number): Inference
     return new Float32Array(buffer, payloadOffset + descriptor.offset, descriptor.length);
   };
   return {
-    request_id: requestId, method: header.method, mode: header.mode, component: header.component,
+    request_id: requestId, request_key: requestKey, method: header.method, mode: header.mode, component: header.component,
     grid: header.grid, scale: header.scale, elapsed_ms: header.elapsed_ms,
     fluid_fraction: header.fluid_fraction, contract: header.contract,
     cloud: read("cloud"), volume: read("volume"),
@@ -251,25 +252,41 @@ function buildOuterBoundary(mode: Exclude<BoundaryMode, "hidden">) {
 
 function FieldScene({ data, spheres, solidObstacle, surfaceModes, boundaryMode, onTiming }: { data: Inference | null; spheres: Sphere[]; solidObstacle: boolean; surfaceModes: boolean; boundaryMode: BoundaryMode; onTiming: (timing: Partial<Timings>) => void }) {
   const mount = useRef<HTMLDivElement>(null);
-  const [isoResult, setIsoResult] = useState<IsoResult>({ mode: null, obstacle: null });
+  const liveSphereMeshes = useRef<THREE.Mesh[]>([]);
+  const [modeIso, setModeIso] = useState<IsoGeometry | null>(null);
+  const [obstacleIso, setObstacleIso] = useState<ObstacleGeometry | null>(null);
+  const sphereKey = useMemo(() => JSON.stringify(spheres), [spheres]);
+
   useEffect(() => {
-    const needsMode = Boolean(surfaceModes && data?.volume.length);
-    if (!solidObstacle && !needsMode) {
-      setIsoResult({ mode: null, obstacle: null });
+    if (!surfaceModes || !data?.volume.length) {
+      setModeIso(null);
       onTiming({ isosurface: 0 });
       return;
     }
-    setIsoResult({ mode: null, obstacle: null });
+    setModeIso(null);
     onTiming({ isosurface: null, render: null });
     const worker = new Worker(new URL("./isosurface.worker.ts", import.meta.url), { type: "module" });
-    const modeBuffer = needsMode ? data!.volume.slice().buffer as ArrayBuffer : null;
-    worker.onmessage = (event: MessageEvent<IsoResult & { elapsedMs: number }>) => {
-      setIsoResult({ mode: event.data.mode, obstacle: event.data.obstacle });
+    const modeBuffer = data.volume.slice().buffer as ArrayBuffer;
+    worker.onmessage = (event: MessageEvent<{ mode: IsoGeometry | null; elapsedMs: number }>) => {
+      setModeIso(event.data.mode);
       onTiming({ isosurface: event.data.elapsedMs });
     };
-    worker.postMessage({ mode: modeBuffer ? { values: modeBuffer, resolution: data!.grid } : null, obstacle: solidObstacle ? { spheres, resolution: 42 } : null }, modeBuffer ? [modeBuffer] : []);
+    worker.postMessage({ mode: { values: modeBuffer, resolution: data.grid }, obstacle: null }, [modeBuffer]);
     return () => worker.terminate();
-  }, [data, spheres, solidObstacle, surfaceModes, onTiming]);
+  }, [data, surfaceModes, onTiming]);
+
+  useEffect(() => {
+    if (!solidObstacle) {
+      setObstacleIso(null);
+      return;
+    }
+    const worker = new Worker(new URL("./isosurface.worker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = (event: MessageEvent<{ obstacle: IsoGeometry | null }>) => {
+      if (event.data.obstacle) setObstacleIso({ ...event.data.obstacle, key: sphereKey });
+    };
+    worker.postMessage({ mode: null, obstacle: { spheres, resolution: 42 } });
+    return () => worker.terminate();
+  }, [spheres, sphereKey, solidObstacle]);
 
   useEffect(() => {
     const host = mount.current;
@@ -295,16 +312,20 @@ function FieldScene({ data, spheres, solidObstacle, surfaceModes, boundaryMode, 
     keyLight.position.set(1.4, 1.8, 1.2);
     scene.add(keyLight);
     if (boundaryMode !== "hidden") group.add(buildOuterBoundary(boundaryMode));
-    if (!solidObstacle) spheres.forEach((s, i) => {
+    const proxyMeshes = spheres.map((s, i) => {
       const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(s[3], 28, 18),
-        new THREE.MeshBasicMaterial({ color: i === 1 ? 0xb73d49 : 0x2e6fa5, transparent: true, opacity: 0.12, wireframe: true }),
+        new THREE.SphereGeometry(1, 28, 18),
+        new THREE.MeshBasicMaterial({ color: i === 1 ? 0xb73d49 : 0x2e6fa5, transparent: true, opacity: solidObstacle ? 0.2 : 0.12, wireframe: !solidObstacle, depthWrite: false }),
       );
       mesh.position.set(s[0] - 0.5, s[1] - 0.5, s[2] - 0.5);
+      mesh.scale.setScalar(s[3]);
+      mesh.visible = !solidObstacle || obstacleIso?.key !== sphereKey;
       group.add(mesh);
+      return mesh;
     });
-    if (solidObstacle && isoResult.obstacle) group.add(buildIsoMesh(isoResult.obstacle, 0x1e5f8a, 1));
-    if (surfaceModes && isoResult.mode) group.add(buildIsoMesh(isoResult.mode, 0xbd3b48, 0.78));
+    liveSphereMeshes.current = proxyMeshes;
+    if (solidObstacle && obstacleIso) group.add(buildIsoMesh(obstacleIso, 0x1e5f8a, 1));
+    if (surfaceModes && modeIso) group.add(buildIsoMesh(modeIso, 0xbd3b48, 0.78));
     if (!surfaceModes && data?.cloud?.length) {
       const count = data.cloud.length / 4;
       const positions = new Float32Array(count * 3);
@@ -332,8 +353,18 @@ function FieldScene({ data, spheres, solidObstacle, surfaceModes, boundaryMode, 
     draw();
     const resize = () => { const w = host.clientWidth, h = host.clientHeight; camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h); };
     const observer = new ResizeObserver(resize); observer.observe(host);
-    return () => { cancelAnimationFrame(frame); cancelAnimationFrame(timingFrame); observer.disconnect(); renderer.dispose(); host.removeChild(renderer.domElement); };
-  }, [data, spheres, solidObstacle, surfaceModes, boundaryMode, isoResult, onTiming]);
+    return () => { liveSphereMeshes.current = []; cancelAnimationFrame(frame); cancelAnimationFrame(timingFrame); observer.disconnect(); renderer.dispose(); host.removeChild(renderer.domElement); };
+  }, [data, solidObstacle, surfaceModes, boundaryMode, modeIso, obstacleIso, onTiming]);
+
+  useEffect(() => {
+    liveSphereMeshes.current.forEach((mesh, index) => {
+      const sphere = spheres[index];
+      if (!sphere) return;
+      mesh.position.set(sphere[0] - 0.5, sphere[1] - 0.5, sphere[2] - 0.5);
+      mesh.scale.setScalar(sphere[3]);
+      mesh.visible = !solidObstacle || obstacleIso?.key !== sphereKey;
+    });
+  }, [spheres, sphereKey, solidObstacle, obstacleIso]);
   return <div className="scene" ref={mount}><span className="scene-hint">drag to orbit</span></div>;
 }
 
@@ -363,6 +394,8 @@ export default function Home() {
     setSpheres(current => current.map((sphere, i) => i === index ? sphere.map((v, j) => j === field ? value : v) as Sphere : sphere));
   }, []);
   const requestBody = useMemo(() => ({ method, mode, component, spheres }), [method, mode, component, spheres]);
+  const requestKey = useMemo(() => JSON.stringify(requestBody), [requestBody]);
+  const visibleData = data && data.method === method && data.mode === mode && data.component === component ? data : null;
   const recordVisualTiming = useCallback((timing: Partial<Timings>) => setTimings(current => ({ ...current, ...timing })), []);
   useEffect(() => {
     if (LOCAL_BUILD) return;
@@ -383,7 +416,6 @@ export default function Home() {
   useEffect(() => {
     const requestId = ++requestSequence.current;
     const controller = new AbortController();
-    setData(null);
     setEigenvalue(null);
     setEigenBusy(false);
     setTimings(EMPTY_TIMINGS);
@@ -391,7 +423,7 @@ export default function Home() {
       setBusy(true); setStatus(method === "fd_laplacian" ? "Checking Ritz availability…" : "Evaluating selected mode…");
       try {
         const requestStarted = performance.now();
-        const response = await fetch("/infer", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/octet-stream" }, body: JSON.stringify(requestBody), signal: controller.signal });
+        const response = await fetch("/infer", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/octet-stream" }, body: requestKey, signal: controller.signal });
         const binary = await response.arrayBuffer();
         const responseReceived = performance.now();
         if (!response.ok) {
@@ -400,7 +432,7 @@ export default function Home() {
           throw new Error(message);
         }
         const parseStarted = performance.now();
-        const result = parseInferenceBinary(binary, requestId);
+        const result = parseInferenceBinary(binary, requestId, requestKey);
         const parseMs = performance.now() - parseStarted;
         if (requestId !== requestSequence.current) return;
         setData(result);
@@ -409,12 +441,12 @@ export default function Home() {
       } catch (error) {
         if ((error as Error).name !== "AbortError" && requestId === requestSequence.current) { setStatus((error as Error).message); if (method === "fd_laplacian") setData(null); }
       } finally { if (requestId === requestSequence.current) setBusy(false); }
-    }, 280);
+    }, 500);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [requestBody, method]);
+  }, [requestBody, requestKey, method]);
 
   useEffect(() => {
-    if (!data || data.method !== method || data.mode !== mode) return;
+    if (!data || data.request_key !== requestKey || data.method !== method || data.mode !== mode) return;
     const controller = new AbortController();
     let secondFrame = 0;
     const firstFrame = requestAnimationFrame(() => {
@@ -433,7 +465,7 @@ export default function Home() {
       });
     });
     return () => { cancelAnimationFrame(firstFrame); cancelAnimationFrame(secondFrame); controller.abort(); };
-  }, [data, method, mode, requestBody]);
+  }, [data, method, mode, requestBody, requestKey]);
 
   return <main>
     <header className="masthead">
@@ -472,9 +504,9 @@ export default function Home() {
 
       <div className="visuals">
           <div className="visual-head"><div><span className="method-symbol">{active.short}</span><h2>{active.name} <b>mode {mode + 1}</b></h2></div><div className={busy ? "status busy" : "status"}><i />{timings.inference === null ? <span>{status}</span> : <><span className="inference-time">Inference Time · {timings.inference.toFixed(0)} ms</span>{!LOCAL_BUILD && <span className="pipeline-times">Network {timings.network?.toFixed(0) ?? "…"} ms · Parse {timings.parse?.toFixed(1) ?? "…"} ms · Isosurface {timings.isosurface?.toFixed(0) ?? "…"} ms · Render {timings.render?.toFixed(0) ?? "…"} ms</span>}</>}</div></div>
-          <FieldScene data={data} spheres={spheres} solidObstacle={solidObstacle} surfaceModes={surfaceModes} boundaryMode={boundaryMode} onTiming={recordVisualTiming} />
+          <FieldScene data={visibleData} spheres={spheres} solidObstacle={solidObstacle} surfaceModes={surfaceModes} boundaryMode={boundaryMode} onTiming={recordVisualTiming} />
         <div className="legend vector-legend"><span className="legend-line mode-line"/>mode / vector field<span className="legend-line obstacle-line"/>obstacle<span className="legend-line boundary-line"/>outer boundary<small>SVG vector slices</small></div>
-        <div className="slice-row"><VectorSlice axis="x" vectors={data?.vector_slices.x} spheres={spheres}/><VectorSlice axis="y" vectors={data?.vector_slices.y} spheres={spheres}/><VectorSlice axis="z" vectors={data?.vector_slices.z} spheres={spheres}/></div>
+          <div className="slice-row"><VectorSlice axis="x" vectors={visibleData?.vector_slices.x} spheres={spheres}/><VectorSlice axis="y" vectors={visibleData?.vector_slices.y} spheres={spheres}/><VectorSlice axis="z" vectors={visibleData?.vector_slices.z} spheres={spheres}/></div>
       </div>
     </section>
 
